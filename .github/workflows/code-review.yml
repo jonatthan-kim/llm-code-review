@@ -23,14 +23,14 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          aws-region: ap-northeast-2
 
       - name: Submit AWS Batch job
         run: |
           JOB_ID=$(aws batch submit-job \
             --job-name code-review-${{ github.event.pull_request.number }} \
-            --job-queue your-job-queue-name \
-            --job-definition your-job-definition-name \
+            --job-queue llm-job-queue \
+            --job-definition llm-code-review \
             --container-overrides '{
               "environment": [
                 {"name": "DIFF", "value": "${{ steps.diff.outputs.diff }}"},
