@@ -25,22 +25,18 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-northeast-2
 
-      - name: Submit AWS Batch job
+      - name: Upload diff to S3
         run: |
-          JOB_ID=$(aws batch submit-job \
-            --job-name code-review-${{ github.event.pull_request.number }} \
-            --job-queue llm-job-queue \
-            --job-definition llm-code-review \
-            --container-overrides '{
-              "environment": [
-                {"name": "DIFF", "value": "${{ steps.diff.outputs.diff }}"},
-                {"name": "PR_NUMBER", "value": "${{ github.event.pull_request.number }}"},
-                {"name": "HUGGINGFACE_TOKEN", "value": "${{ secrets.HUGGINGFACE_TOKEN }}"}
-              ]
-            }' \
-            --query 'jobId' \
-            --output text)
-          echo "::set-output name=job_id::$JOB_ID"
+          DIFF_S3_KEY="diffs/pr-${{ github.event.pull_request.number }}-${{ github.sha }}.txt"
+          aws s3 cp pr_diff.txt s3://llm-code-review-test/$DIFF_S3_KEY
+          echo "::set-output name=diff_s3_key::$DIFF_S3_KEY"
+        id: upload-diff
+
+      - name: Invoke Lambda function
+        run: |
+          aws lambda invoke --function-name code-review-lambda-dev-codeReview \
+            --payload '{"diff_s3_key": "${{ steps.upload-diff.outputs.diff_s3_key }}", "pr_number": "${{ github.event.pull_request.number }}"}' \
+            response.json
 
       - name: Wait for Batch job completion
         run: |
