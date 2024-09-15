@@ -25,12 +25,31 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-northeast-2
 
+      - name: Get diff
+        run: |
+          git diff --no-prefix ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} > pr_diff.txt
+          
+      - name: List directory contents
+        run: ls -la
+
+      - name: Check if diff file exists
+        run: |
+          if [ ! -f pr_diff.txt ]; then
+            echo "pr_diff.txt does not exist"
+            exit 1
+          fi
+
       - name: Upload diff to S3
         run: |
           DIFF_S3_KEY="diffs/pr-${{ github.event.pull_request.number }}-${{ github.sha }}.txt"
-          aws s3 cp pr_diff.txt s3://llm-code-review-test/$DIFF_S3_KEY
-          echo "::set-output name=diff_s3_key::$DIFF_S3_KEY"
-        id: upload-diff
+          if [ -f pr_diff.txt ]; then
+            aws s3 cp pr_diff.txt s3://llm-code-review-test/$DIFF_S3_KEY
+            echo "::set-output name=diff_s3_key::$DIFF_S3_KEY"
+          else
+            echo "pr_diff.txt not found. Current directory contents:"
+            ls -la
+            exit 1
+          fi
 
       - name: Invoke Lambda function
         run: |
