@@ -57,18 +57,31 @@ jobs:
           fi
 
       - name: Invoke Lambda function
+        id: invoke-lambda
         run: |
-          DIFF_S3_KEY="${{ steps.upload-diff.outputs.diff_s3_key }}"
+          DIFF_S3_KEY="diffs/pr-${{ github.event.pull_request.number }}-${{ github.sha }}.txt"
           PR_NUMBER="${{ github.event.pull_request.number }}"
-          PAYLOAD=$(echo -n "{\"diff_s3_key\": \"$DIFF_S3_KEY\", \"pr_number\": \"$PR_NUMBER\"}" | base64 -w 0)
-          aws lambda invoke \
+          PAYLOAD="{\"diff_s3_key\": \"$DIFF_S3_KEY\", \"pr_number\": \"$PR_NUMBER\"}"
+          RESPONSE=$(aws lambda invoke \
             --function-name code-review-lambda-dev-codeReview \
             --payload "$PAYLOAD" \
-            response.json
+            --cli-binary-format raw-in-base64-out \
+            response.json --query 'Payload' --output text)
+          echo "lambda_response=$RESPONSE" >> $GITHUB_OUTPUT
+
+      - name: Extract job ID
+        id: extract-job-id
+        run: |
+          JOB_ID=$(echo '${{ steps.invoke-lambda.outputs.lambda_response }}' | jq -r '.job_id')
+          echo "job_id=$JOB_ID" >> $GITHUB_OUTPUT
 
       - name: Wait for Batch job completion
         run: |
-          job_id="${{ steps.submit-job.outputs.job_id }}"
+          job_id="${{ steps.extract-job-id.outputs.job_id }}"
+          if [ -z "$job_id" ]; then
+            echo "No job ID received from Lambda function"
+            exit 1
+          fi
           while true; do
             status=$(aws batch describe-jobs --jobs $job_id --query 'jobs[0].status' --output text)
             if [ "$status" = "SUCCEEDED" ]; then
