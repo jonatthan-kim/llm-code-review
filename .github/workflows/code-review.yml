@@ -66,7 +66,7 @@ jobs:
             --function-name code-review-lambda-dev-codeReview \
             --payload "$PAYLOAD" \
             --cli-binary-format raw-in-base64-out \
-            response.json --query 'Payload' --output text)
+            output.json > /dev/null && cat output.json | jq -r '.body | fromjson | .jobId')
           echo "lambda_response=$RESPONSE" >> $GITHUB_OUTPUT
 
       - name: Extract job ID
