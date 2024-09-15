@@ -44,6 +44,7 @@ jobs:
           fi
 
       - name: Upload diff to S3
+        id: upload-diff
         run: |
           DIFF_S3_KEY="diffs/pr-${{ github.event.pull_request.number }}-${{ github.sha }}.txt"
           if [ -f pr_diff.txt ]; then
@@ -57,8 +58,12 @@ jobs:
 
       - name: Invoke Lambda function
         run: |
-          aws lambda invoke --function-name code-review-lambda-dev-codeReview \
-            --payload '{"diff_s3_key": "${{ steps.upload-diff.outputs.diff_s3_key }}", "pr_number": "${{ github.event.pull_request.number }}"}' \
+          DIFF_S3_KEY="${{ steps.upload-diff.outputs.diff_s3_key }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PAYLOAD=$(echo -n "{\"diff_s3_key\": \"$DIFF_S3_KEY\", \"pr_number\": \"$PR_NUMBER\"}" | base64 -w 0)
+          aws lambda invoke \
+            --function-name code-review-lambda-dev-codeReview \
+            --payload "$PAYLOAD" \
             response.json
 
       - name: Wait for Batch job completion
