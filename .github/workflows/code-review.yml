@@ -44,7 +44,20 @@ jobs:
 
       - name: Wait for Batch job completion
         run: |
-          aws batch wait job-complete --job-id ${{ steps.submit-job.outputs.job_id }}
+          job_id="${{ steps.submit-job.outputs.job_id }}"
+          while true; do
+            status=$(aws batch describe-jobs --jobs $job_id --query 'jobs[0].status' --output text)
+            if [ "$status" = "SUCCEEDED" ]; then
+              echo "Job completed successfully"
+              break
+            elif [ "$status" = "FAILED" ]; then
+              echo "Job failed"
+              exit 1
+            else
+              echo "Job is still running. Current status: $status"
+              sleep 30
+            fi
+          done
 
       - name: Get Batch job results
         id: results
