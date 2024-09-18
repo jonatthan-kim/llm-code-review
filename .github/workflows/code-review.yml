@@ -61,7 +61,8 @@ jobs:
         run: |
           DIFF_S3_KEY="diffs/pr-${{ github.event.pull_request.number }}-${{ github.sha }}.txt"
           PR_NUMBER="${{ github.event.pull_request.number }}"
-          PAYLOAD=$(echo -n "{\"diff_s3_key\": \"$DIFF_S3_KEY\", \"pr_number\": \"$PR_NUMBER\"}" | jq -c .)
+          HUGGINGFACE_TOKEN="${{ secrets.HUGGINGFACE_TOKEN }}"
+          PAYLOAD=$(echo -n "{\"diff_s3_key\": \"$DIFF_S3_KEY\", \"pr_number\": \"$PR_NUMBER\", \"huggingface_token\": \"$HUGGINGFACE_TOKEN\"}" | jq -c .)
           JOB_ID=$(aws lambda invoke \
             --function-name code-review-lambda-dev-codeReview \
             --payload "$PAYLOAD" \
