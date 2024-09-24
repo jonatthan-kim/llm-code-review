@@ -115,4 +115,3 @@ jobs:
               repo: context.repo.repo,
               body: `코드 리뷰 결과:\n\n${review.review_result}`
             });
-      
