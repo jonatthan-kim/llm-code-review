@@ -101,17 +101,55 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           aws s3 cp s3://llm-code-review-test/review_result/result_${PR_NUMBER}.json result.json
-          echo "review_result=$(cat result.json)" >> $GITHUB_OUTPUT
+          review_result=$(cat result.json | jq -r '.review_result')
+          echo "review_result<<EOF" >> $GITHUB_OUTPUT
+          echo "$review_result" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Comment PR
+      - name: Comment PR with review result
         uses: actions/github-script@v6
         with:
-          github-token: ${{secrets.GITHUB_TOKEN}}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const review = ${{ steps.get-review.outputs.review_result }};
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `코드 리뷰 결과:\n\n${review.review_result}`
-            });
+            const reviewContent = `${{ steps.get-review.outputs.review_result }}`;
+
+            // 코멘트 길이 제한 (UTF-8 바이트 기준)
+            const maxCommentBytes = 65000;
+
+            // UTF-8 바이트 길이를 고려하여 문자열을 분할하는 함수
+            function splitByBytes(str, maxBytes) {
+              const encoder = new TextEncoder();
+              const bytes = encoder.encode(str);
+              let result = [];
+              let start = 0;
+
+              while (start < bytes.length) {
+                let end = Math.min(start + maxBytes, bytes.length);
+                // UTF-8 문자 경계를 고려하여 조정
+                while (end > start && (bytes[end] & 0xC0) === 0x80) {
+                  end--;
+                }
+                const chunk = bytes.slice(start, end);
+                result.push(new TextDecoder().decode(chunk));
+                start = end;
+              }
+              return result;
+            }
+
+            // 코멘트 내용을 분할
+            const contentParts = splitByBytes(reviewContent, maxCommentBytes);
+
+            // 분할된 코멘트를 순차적으로 게시
+            for (let i = 0; i < contentParts.length; i++) {
+              const part = contentParts[i];
+              const commentBody = i === 0
+                ? `코드 리뷰 결과:\n\n${part}`
+                : `코드 리뷰 결과 (계속):\n\n${part}`;
+
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: commentBody,
+              });
+            }
