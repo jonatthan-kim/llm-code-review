@@ -114,7 +114,7 @@ jobs:
             const reviewContent = `${{ steps.get-review.outputs.review_result }}`;
 
             // 코멘트 길이 제한 (UTF-8 바이트 기준)
-            const maxCommentBytes = 65000;
+            const maxCommentBytes = 1300;
 
             // UTF-8 바이트 길이를 고려하여 문자열을 분할하는 함수
             function splitByBytes(str, maxBytes) {
