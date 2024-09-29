@@ -111,7 +111,7 @@ jobs:
         with:
           github_token: ${{secrets.GITHUB_TOKEN}}
           script: |
-            const review = `${{ steps.get-review.outputs.review_result }}`;
+            const review = ${{ toJSON(steps.get-review.outputs.review_result) }};
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
