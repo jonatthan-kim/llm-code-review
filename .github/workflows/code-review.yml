@@ -7,63 +7,46 @@ on:
 jobs:
   code-review:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
       - name: Checkout code
         uses: actions/checkout@v2
-
-      - name: Get PR diff
-        id: diff
-        run: |
-          git fetch origin ${{ github.base_ref }}
-          DIFF=$(git diff origin/${{ github.base_ref }} ${{ github.sha }} | base64 -w 0)
-          echo "::set-output name=diff::$DIFF"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          aws-region: ap-northeast-2
 
-      - name: Submit AWS Batch job
+      - name: Get Review Result from S3
+        id: get-review
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          JOB_ID=$(aws batch submit-job \
-            --job-name code-review-${{ github.event.pull_request.number }} \
-            --job-queue your-job-queue-name \
-            --job-definition your-job-definition-name \
-            --container-overrides '{
-              "environment": [
-                {"name": "DIFF", "value": "${{ steps.diff.outputs.diff }}"},
-                {"name": "PR_NUMBER", "value": "${{ github.event.pull_request.number }}"},
-                {"name": "HUGGINGFACE_TOKEN", "value": "${{ secrets.HUGGINGFACE_TOKEN }}"}
-              ]
-            }' \
-            --query 'jobId' \
-            --output text)
-          echo "::set-output name=job_id::$JOB_ID"
-
-      - name: Wait for Batch job completion
-        run: |
-          aws batch wait job-complete --job-id ${{ steps.submit-job.outputs.job_id }}
-
-      - name: Get Batch job results
-        id: results
-        run: |
-          RESULTS=$(aws batch describe-jobs --jobs ${{ steps.submit-job.outputs.job_id }} | jq -r '.jobs[0].container.logStreamName')
-          LOGS=$(aws logs get-log-events --log-group-name /aws/batch/job --log-stream-name $RESULTS | jq -r '.events[].message' | base64 -w 0)
-          echo "::set-output name=logs::$LOGS"
+          aws s3 cp s3://llm-code-review-test/review_result/result_1.json result.json
+          cat result.json
+          review_result=$(cat result.json | jq -r '.review_result')
+          echo "review_result<<EOF" >> $GITHUB_OUTPUT
+          echo "$review_result" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Comment PR
         uses: actions/github-script@v6
         with:
-          github-token: ${{secrets.GITHUB_TOKEN}}
+          github_token: ${{secrets.GITHUB_TOKEN}}
           script: |
-            const fs = require('fs');
-            const decodedLogs = Buffer.from('${{ steps.results.outputs.logs }}', 'base64').toString('utf-8');
-            const review = JSON.parse(decodedLogs);
-            github.rest.issues.createComment({
+            const review = ${{ toJSON(steps.get-review.outputs.review_result) }};
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `Code review results:\n\n${review.review_result}`
-            })
+              body: `코드 리뷰 결과:\n\n${review}`
+            });
