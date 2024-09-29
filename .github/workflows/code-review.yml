@@ -31,7 +31,7 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          aws s3 cp s3://llm-code-review-test/review_result/result_2.json result.json
+          aws s3 cp s3://llm-code-review-test/review_result/result_1.json result.json
           cat result.json
           review_result=$(cat result.json | jq -r '.review_result')
           echo "review_result<<EOF" >> $GITHUB_OUTPUT
@@ -43,7 +43,7 @@ jobs:
         with:
           github_token: ${{secrets.GITHUB_TOKEN}}
           script: |
-            const review = `${{ steps.get-review.outputs.review_result }}`;
+            const review = ${{ toJSON(steps.get-review.outputs.review_result) }};
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
