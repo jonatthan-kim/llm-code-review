@@ -32,11 +32,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           aws s3 cp s3://llm-code-review-test/review_result/result_2.json result.json
-          cat result.json
           review_result=$(cat result.json | jq -r '.review_result')
-          echo "review_result<<EOF" >> $GITHUB_OUTPUT
-          echo "$review_result" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "review_result=$review_result" >> $GITHUB_OUTPUT
 
       - name: Comment PR
         uses: actions/github-script@v6
