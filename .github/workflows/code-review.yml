@@ -7,7 +7,15 @@ on:
 jobs:
   code-review:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
       - name: Checkout code
         uses: actions/checkout@v2
 
@@ -23,47 +31,90 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          aws-region: ap-northeast-2
 
-      - name: Submit AWS Batch job
+      - name: Get diff
         run: |
-          JOB_ID=$(aws batch submit-job \
-            --job-name code-review-${{ github.event.pull_request.number }} \
-            --job-queue your-job-queue-name \
-            --job-definition your-job-definition-name \
-            --container-overrides '{
-              "environment": [
-                {"name": "DIFF", "value": "${{ steps.diff.outputs.diff }}"},
-                {"name": "PR_NUMBER", "value": "${{ github.event.pull_request.number }}"},
-                {"name": "HUGGINGFACE_TOKEN", "value": "${{ secrets.HUGGINGFACE_TOKEN }}"}
-              ]
-            }' \
-            --query 'jobId' \
-            --output text)
-          echo "::set-output name=job_id::$JOB_ID"
+          git diff --no-prefix ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} > pr_diff.txt
+          
+      - name: List directory contents
+        run: ls -la
+
+      - name: Check if diff file exists
+        run: |
+          if [ ! -f pr_diff.txt ]; then
+            echo "pr_diff.txt does not exist"
+            exit 1
+          fi
+
+      - name: Upload diff to S3
+        id: upload-diff
+        run: |
+          DIFF_S3_KEY="diffs/pr-${{ github.event.pull_request.number }}-${{ github.sha }}.txt"
+          if [ -f pr_diff.txt ]; then
+            aws s3 cp pr_diff.txt s3://llm-code-review-test/$DIFF_S3_KEY
+            echo "::set-output name=diff_s3_key::$DIFF_S3_KEY"
+          else
+            echo "pr_diff.txt not found. Current directory contents:"
+            ls -la
+            exit 1
+          fi
+
+      - name: Invoke Lambda function and get Batch job ID
+        id: invoke-lambda
+        run: |
+          DIFF_S3_KEY="diffs/pr-${{ github.event.pull_request.number }}-${{ github.sha }}.txt"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          HUGGINGFACE_TOKEN="${{ secrets.HUGGINGFACE_TOKEN }}"
+          PAYLOAD=$(echo -n "{\"diff_s3_key\": \"$DIFF_S3_KEY\", \"pr_number\": \"$PR_NUMBER\", \"huggingface_token\": \"$HUGGINGFACE_TOKEN\"}" | jq -c .)
+          JOB_ID=$(aws lambda invoke \
+            --function-name code-review-lambda-dev-codeReview \
+            --payload "$PAYLOAD" \
+            --cli-binary-format raw-in-base64-out \
+            output.json > /dev/null && cat output.json | jq -r '.body | fromjson | .jobId')
+          echo "job_id=$JOB_ID" >> $GITHUB_OUTPUT
 
       - name: Wait for Batch job completion
         run: |
-          aws batch wait job-complete --job-id ${{ steps.submit-job.outputs.job_id }}
+          job_id="${{ steps.invoke-lambda.outputs.job_id }}"
+          if [ -z "$job_id" ]; then
+            echo "No job ID received from Lambda function"
+            exit 1
+          fi
+          while true; do
+            status=$(aws batch describe-jobs --jobs $job_id --query 'jobs[0].status' --output text)
+            if [ "$status" = "SUCCEEDED" ]; then
+              echo "Job completed successfully"
+              break
+            elif [ "$status" = "FAILED" ]; then
+              echo "Job failed"
+              exit 1
+            else
+              echo "Job is still running. Current status: $status"
+              sleep 30
+            fi
+          done
 
-      - name: Get Batch job results
-        id: results
+      - name: Get Review Result from S3
+        id: get-review
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          RESULTS=$(aws batch describe-jobs --jobs ${{ steps.submit-job.outputs.job_id }} | jq -r '.jobs[0].container.logStreamName')
-          LOGS=$(aws logs get-log-events --log-group-name /aws/batch/job --log-stream-name $RESULTS | jq -r '.events[].message' | base64 -w 0)
-          echo "::set-output name=logs::$LOGS"
+          aws s3 cp s3://llm-code-review-test/review_result/result_${PR_NUMBER}.json result.json
+          review_result=$(cat result.json | jq -r '.review_result')
+          echo "review_result<<EOF" >> $GITHUB_OUTPUT
+          echo "$review_result" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Comment PR
         uses: actions/github-script@v6
         with:
-          github-token: ${{secrets.GITHUB_TOKEN}}
+          github_token: ${{secrets.GITHUB_TOKEN}}
           script: |
-            const fs = require('fs');
-            const decodedLogs = Buffer.from('${{ steps.results.outputs.logs }}', 'base64').toString('utf-8');
-            const review = JSON.parse(decodedLogs);
-            github.rest.issues.createComment({
+            const review = ${{ toJSON(steps.get-review.outputs.review_result) }};
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `Code review results:\n\n${review.review_result}`
-            })
+              body: `코드 리뷰 결과:\n\n${review}`
+            });
